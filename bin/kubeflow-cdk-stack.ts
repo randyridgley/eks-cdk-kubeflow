@@ -1,10 +1,13 @@
 import cdk = require('@aws-cdk/core');
 import eks = require('@aws-cdk/aws-eks');
 import iam = require('@aws-cdk/aws-iam');
-import lambda = require('@aws-cdk/aws-lambda');
 import s3 = require('@aws-cdk/aws-s3');
 
 import { KubeflowCluster } from '../lib/kubeflow-cluster';
+import { KubectlLambdaLayerVersion } from '../lib/kubectl-layer';
+import { KfctlLambdaLayerVersion } from '../lib/kfctl-layer';
+
+import moment = require('moment');
 
 export class KubeflowStack extends cdk.Stack {
   constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
@@ -21,16 +24,27 @@ export class KubeflowStack extends cdk.Stack {
       defaultCapacity: 6,     
     });
 
+    const clusterBucket = new s3.Bucket(this, 'clusterBucket', {
+      bucketName: this.makeBucketName("kubeflow-demo")
+    });
+
+    const kfctlLayer = new KfctlLambdaLayerVersion(this, 'KfctlLambdaLayer', {});
+    const kubctlLayer = new KubectlLambdaLayerVersion(this, 'KubectlLambdaLayer', {});
+
     new KubeflowCluster(this, 'KfCluster', {
       cluster,
       layers: [
-        lambda.LayerVersion.fromLayerVersionArn(this, 'KubectlLayer', "arn:aws:lambda:eu-west-1:934676248949:layer:lambda-layer-kubectl:1"),
-        lambda.LayerVersion.fromLayerVersionArn(this, 'KfctlLayer', "arn:aws:lambda:eu-west-1:934676248949:layer:KfctlLayer:8"),
+        kubctlLayer,
+        kfctlLayer,
       ],
       configUrl: "https://raw.githubusercontent.com/kubeflow/manifests/v0.7-branch/kfdef/kfctl_aws.0.7.0.yaml",
-      bucket: "kubeflow-demo-mmcclean-eu-west-1",
+      bucket: clusterBucket.bucketName,
       adminRole: clusterAdmin,
     });
+  }
+
+  makeBucketName(bucketSuffix: string) : string {
+    return cdk.Aws.ACCOUNT_ID + moment().format('YYYYMMDDhhmmss') + bucketSuffix;
   }
 }
 
