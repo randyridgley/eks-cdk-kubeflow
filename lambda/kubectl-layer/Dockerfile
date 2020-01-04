@@ -22,6 +22,10 @@ RUN wget https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 \
 ADD https://amazon-eks.s3-us-west-2.amazonaws.com/1.14.6/2019-08-22/bin/linux/amd64/kubectl /opt/kubectl/
 RUN chmod +x /opt/kubectl/kubectl
 
+# download helm v3
+RUN mkdir -p /opt/helm && wget -qO- https://get.helm.sh/helm-v3.0.0-linux-amd64.tar.gz | tar -xz -C /opt/helm/
+ 
+
 #
 # prepare the runtime at /opt/kubectl
 
@@ -47,6 +51,11 @@ COPY --from=builder /usr/bin/make /opt/awscli/make
 #
 COPY --from=builder /opt/kubectl/kubectl /opt/kubectl/kubectl
 
+#
+# helm
+#
+COPY --from=builder /opt/helm/linux-amd64/helm /opt/helm/helm
+
 # remove unnecessary files to reduce the size
 RUN rm -rf /opt/awscli/pip* /opt/awscli/setuptools* /opt/awscli/awscli/examples
 
@@ -58,6 +67,7 @@ ls -alh /layer.zip;
 
 # get the version number
 RUN grep "__version__" /opt/awscli/awscli/__init__.py | egrep -o "1.[0-9.]+" | tee /AWSCLI_VERSION
+RUN /opt/helm/helm version 2>&1 | tee /HELM_VERSION
 RUN /opt/kubectl/kubectl version 2>&1 | tee /KUBECTL_VERSION
 RUN /opt/awscli/jq --version  2>&1 | tee /JQ_VERSION
 RUN /opt/awscli/make --version  2>&1 | tee /MAKE_VERSION

@@ -53,7 +53,41 @@ sendResponseCurl(){
   -d @$1 $2
 }
 
+alb_ingress_controller_install(){
+  DIR=`pwd`/alb-ingress-controller
+  if [ ! -d ${DIR} ]; then mkdir -p ${DIR}; fi
+  echo "Downloading alb-ingress resources..."
+  wget "https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.3.0/docs/examples/alb-ingress-controller.yaml" -P $DIR
+  wget "https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.3.0/docs/examples/rbac-role.yaml" -P $DIR
+
+  sed -i "s/devCluster/$ClusterName/g" $DIR/alb-ingress-controller.yaml
+
+  echo "Deploying alb-ingress-resources..."
+  kubectl apply -f $DIR/rbac-role.yaml
+  kubectl apply -f $DIR/alb-ingress-controller.yaml
+
+  for i in {0..10}; 
+  do 
+      status=`kubectl get po -n kube-system | egrep alb-ingress[a-zA-Z0-9-]+ | awk '{print $3}'`
+      if [[ ${status} == "Running" ]] || [[ ${status} == "Succeeded" ]] || [[ ${status} == "Failed" ]] || [[ ${status} == "CrashLoopBackOff"  ]]; 
+      then 
+        echo "Pod state is ${status}."
+        break;  
+      else 
+        echo "$i, Waiting for deployment to finish... ${status} ..."
+        sleep 2; 
+      fi 
+  done
+
+  kubectl logs -n kube-system $(kubectl get po -n kube-system | egrep -o alb-ingress[a-zA-Z0-9-]+)
+}
+
 kubeflow_install(){
+
+  curl -o aws-iam-authenticator https://amazon-eks.s3-us-west-2.amazonaws.com/1.13.7/2019-06-11/bin/linux/amd64/aws-iam-authenticator
+  chmod +x aws-iam-authenticator
+  sudo mv aws-iam-authenticator /usr/local/bin
+
   # setup the kubeflow config
   cd ${KFCONFIG}
   rm -rf *
@@ -141,6 +175,7 @@ EOF
 case $RequestType in 
   "Create")
     kubeflow_install
+    # alb_ingress_controller_install
     sendResponseSuccess
   ;;
   "Delete")

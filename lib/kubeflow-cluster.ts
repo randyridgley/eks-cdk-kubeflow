@@ -2,17 +2,15 @@ import iam = require('@aws-cdk/aws-iam');
 import eks = require('@aws-cdk/aws-eks');
 import cfn = require('@aws-cdk/aws-cloudformation');
 import lambda = require('@aws-cdk/aws-lambda');
-import s3 = require('@aws-cdk/aws-s3');
 
 import path = require('path');
 
 import cdk = require('@aws-cdk/core');
 import { Duration, Stack } from '@aws-cdk/core';
-import { Bucket } from '@aws-cdk/aws-s3';
 
 export interface KubeflowClusterProps {
 
-  readonly cluster: eks.Cluster;
+  cluster: eks.Cluster;
 
   readonly layers: lambda.ILayerVersion[];
 
@@ -30,6 +28,13 @@ export class KubeflowCluster extends cdk.Construct {
     if (props.cluster.defaultCapacity == undefined) {
       throw new Error("Autoscaling group must have at least one instance defined");
     } 
+
+    props.cluster.vpc.publicSubnets.forEach((subnet) => {
+      subnet.node.applyAspect(new cdk.Tag('kubernetes.io/role/elb', '1', { includeResourceTypes: ['AWS::EC2::Subnet'] }));
+    });
+    props.cluster.vpc.privateSubnets.forEach((subnet) => {
+      subnet.node.applyAspect(new cdk.Tag('kubernetes.io/role/internal-elb', '1', { includeResourceTypes: ['AWS::EC2::Subnet'] }));
+    });
 
     const func = new lambda.Function(this, 'KfClusterFunction', {
       code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/kubeflow-cluster-resource')),

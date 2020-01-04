@@ -1,15 +1,16 @@
 import cdk = require('@aws-cdk/core');
 import eks = require('@aws-cdk/aws-eks');
-import iam = require('@aws-cdk/aws-iam');
 import s3 = require('@aws-cdk/aws-s3');
-import { Vpc, SubnetType } from '@aws-cdk/aws-ec2';
+import lambda = require('@aws-cdk/aws-lambda');
+import { AccountRootPrincipal, ManagedPolicy, Role } from '@aws-cdk/aws-iam';
+import { Vpc, SubnetType, InstanceType, InstanceClass, InstanceSize } from '@aws-cdk/aws-ec2';
 
 import { KubeflowCluster } from '../lib/kubeflow-cluster';
-import { KubectlLambdaLayerVersion } from '../lib/kubectl-layer';
-import { KfctlLambdaLayerVersion } from '../lib/kfctl-layer';
 import { EKSConsole } from '../lib/eks-console';
 
 import moment = require('moment');
+import path = require('path');
+import { ClusterAutoscaler } from '@arhea/aws-cdk-eks-cluster-autoscaler';
 
 export class KubeflowStack extends cdk.Stack {
   constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
@@ -18,6 +19,8 @@ export class KubeflowStack extends cdk.Stack {
     const vpc = new Vpc(this, 'VPC', {
       maxAzs: 3,
       cidr: "10.0.0.0/16",
+      enableDnsHostnames: true,
+      enableDnsSupport: true,
       subnetConfiguration: [
         {
           cidrMask: 24,
@@ -33,20 +36,35 @@ export class KubeflowStack extends cdk.Stack {
     });
     
     // first define the role
-    const clusterAdmin = new iam.Role(this, 'AdminRole', {
-      assumedBy: new iam.AccountRootPrincipal()
+    const clusterAdmin = new Role(this, 'AdminRole', {
+      assumedBy: new AccountRootPrincipal()
     });
+    clusterAdmin.addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName('AmazonEKSClusterPolicy'));
+    clusterAdmin.addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName('AmazonEKSServicePolicy'));
 
     // The code that defines your stack goes here
     const cluster = new eks.Cluster(this, 'KubeflowCluster', {
       mastersRole: clusterAdmin,
-      defaultCapacity: 6,         
       vpc: vpc,
-      vpcSubnets: [ { 
-        onePerAz: true,
-        subnetType: SubnetType.PRIVATE
-      } ],
       outputClusterName: true,
+      defaultCapacity: 1
+    });
+
+    // create a custom node group
+    const ng = cluster.addCapacity('kubeflow-ng1', {
+      instanceType: InstanceType.of(InstanceClass.M5, InstanceSize.LARGE),
+      associatePublicIpAddress: false,
+      bootstrapEnabled: true,
+      desiredCapacity: 3,
+      minCapacity: 3,
+      maxCapacity: 6,
+      mapRole: true
+    });
+
+    // create the cluster autoscaler instance
+    const csa = new ClusterAutoscaler(this, 'demo-cluster-autoscaler', {
+      cluster: cluster, // your EKS cluster
+      nodeGroups: [ ng ] // a list of your node groups
     });
 
     const clusterBucket = new s3.Bucket(this, 'clusterBucket', {
@@ -56,19 +74,32 @@ export class KubeflowStack extends cdk.Stack {
     new EKSConsole(this, 'eksConsole', {
       vpc: vpc
     });
-    
-    const kfctlLayer = new KfctlLambdaLayerVersion(this, 'KfctlLambdaLayer', {});
-    const kubctlLayer = new KubectlLambdaLayerVersion(this, 'KubectlLambdaLayer', {});
+
+    const kfctlLayer = new lambda.LayerVersion(this,'KfctlLambdaLayer',{
+      description: 'AWS Lambda Layer for the kfctl CLI',
+      compatibleRuntimes: [lambda.Runtime.PROVIDED],
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/kfctl-layer/layer.zip')),
+      license: 'Available under the MIT-0 license.',
+      layerVersionName: 'lambda-layer-kfctl'
+    });
+
+    const kubectlLayer = new lambda.LayerVersion(this,'KubectlLambdaLayer',{
+      description: 'AWS Lambda Layer for the kubectl CLI',
+      compatibleRuntimes: [lambda.Runtime.PROVIDED],
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/kubectl-layer/layer.zip')),
+      license: 'Available under the MIT-0 license.',
+      layerVersionName: 'lambda-layer-kubectl'
+    });
 
     new KubeflowCluster(this, 'KfCluster', {
       cluster,
       layers: [
-        kubctlLayer,
         kfctlLayer,
+        kubectlLayer
       ],
       configUrl: "https://raw.githubusercontent.com/kubeflow/manifests/v0.7-branch/kfdef/kfctl_aws.0.7.0.yaml",
       bucket: clusterBucket.bucketName,
-      adminRole: clusterAdmin,
+      adminRole: clusterAdmin
     });
   }
 
