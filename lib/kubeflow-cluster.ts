@@ -19,22 +19,17 @@ export interface KubeflowClusterProps {
   readonly configUrl?: string;
 
   readonly adminRole: iam.IRole;
+
+  readonly nodeRole: iam.IRole;
 }
 
 export class KubeflowCluster extends cdk.Construct {
   constructor(scope: cdk.Construct, id: string, props: KubeflowClusterProps) {
     super(scope, id);
 
-    if (props.cluster.defaultCapacity == undefined) {
-      throw new Error("Autoscaling group must have at least one instance defined");
-    } 
-
-    props.cluster.vpc.publicSubnets.forEach((subnet) => {
-      subnet.node.applyAspect(new cdk.Tag('kubernetes.io/role/elb', '1', { includeResourceTypes: ['AWS::EC2::Subnet'] }));
-    });
-    props.cluster.vpc.privateSubnets.forEach((subnet) => {
-      subnet.node.applyAspect(new cdk.Tag('kubernetes.io/role/internal-elb', '1', { includeResourceTypes: ['AWS::EC2::Subnet'] }));
-    });
+    // if (props.cluster.defaultCapacity == undefined) {
+    //   throw new Error("Autoscaling group must have at least one instance defined");
+    // } 
 
     const func = new lambda.Function(this, 'KfClusterFunction', {
       code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/kubeflow-cluster-resource')),
@@ -60,7 +55,7 @@ export class KubeflowCluster extends cdk.Construct {
 
     func.addToRolePolicy(new iam.PolicyStatement({
       actions: [ 'iam:PutRolePolicy' ],
-      resources: [ props.cluster.defaultCapacity.role.roleArn ]
+      resources: [ props.nodeRole.roleArn ]
     }));    
 
     func.addToRolePolicy(new iam.PolicyStatement({
@@ -82,7 +77,7 @@ export class KubeflowCluster extends cdk.Construct {
         clusterName: props.cluster.clusterName,
         ...(props.configUrl) ? { kubeflowConfigUrl: props.configUrl } : {},
         kubeflowStagingS3Bucket: props.bucket,
-        instanceIamRoleArn: props.cluster.defaultCapacity.role.roleArn,
+        instanceIamRoleArn: props.nodeRole.roleArn,
         adminIamRoleArn: props.adminRole.roleArn,
       }    
     });
